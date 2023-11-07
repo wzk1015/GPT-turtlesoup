@@ -5,17 +5,18 @@ import logging
 import os
 import json
 
-from turtle_soup.turtlesoup_prompts import prompt_create_problem, prompt_guess, prompt_judge
+from turtlesoup_prompts import prompt_create_problem, prompt_guess, prompt_judge
 
 
 class TurtleSoup:
-    def __init__(self, stream=True, response_max_tokens=2048, player_temperature=0, judge_temperature=0, create_problem_temperature=0.7, gpt_model="gpt-3.5-turbo-16k"):
+    def __init__(self, stream=True, response_max_tokens=2048, player_temperature=0.7, judge_temperature=0.7, create_problem_temperature=0.7, gpt_model="gpt-3.5-turbo-16k", max_iters=100):
         self.stream = stream
         self.response_max_tokens = response_max_tokens
         self.player_temperature = player_temperature
         self.judge_temperature = judge_temperature
         self.create_problem_temperature = create_problem_temperature
         self.gpt_model = gpt_model
+        self.max_iters = max_iters
     
     def query_gpt_nostream(self, messages, temperature):
         server_error_cnt = 0
@@ -116,14 +117,14 @@ class TurtleSoup:
             answer=answer
         )
         judge = self.query_gpt([{"role": "user", "content": prompt}], temperature=self.judge_temperature).strip().strip("。")
-        assert judge in ["是", "不是", "不相关", "不准确", "成功", "退出"], f"Uknown judge: {judge}"
+        assert judge in ["是", "不是", "不相关", "成功", "退出"], f"Uknown judge: {judge}"
         return judge
     
     def human_judge(self):
-        judge = input('请回答"是","不是","不相关","不准确","成功"或"结束"，或者用y,n,x,z,w,q代替，或者直接打字表示提示: ').strip().lower()
-        if judge in ["q", "结束"]:
+        judge = input('请回答"是","不是","不相关","成功"或"退出"，或者用y,n,x,w,q代替，或者直接打字表示提示: ').strip().lower()
+        if judge in ["q", "退出"]:
             return "退出"
-        elif judge in ["w", "结束"]:
+        elif judge in ["w", "退出"]:
             return "成功"
         elif judge in ["y", "是"]:
             return "是"
@@ -131,8 +132,6 @@ class TurtleSoup:
             return "不是"
         elif judge in ["x", "不相关"]:
             return "不相关"
-        elif judge in ["z", "不准确"]:
-            return "不准确"
         raise ValueError(f"Unknown judgement: {judge}")
     
     def run(self, gpt_play=False, gpt_judge=True, gpt_problem=True, problem=None, answer=None):
@@ -151,6 +150,7 @@ class TurtleSoup:
             problem, answer = self.input_problem()
         
         guesses = []
+        i = 0
         while True:
             print("问: ", end="")
             if gpt_play:
@@ -164,13 +164,13 @@ class TurtleSoup:
             else:
                 judge = self.human_judge()
             guesses.append([guess, judge])
-            assert judge in ["是", "不是", "不相关", "不准确", "成功", "退出"]
+            assert judge in ["是", "不是", "不相关", "成功", "退出"]
             if judge == "成功":
                 print("成功解决！")
                 print(f"答案: {answer}")
                 break
-            elif judge == "退出":
-                print("结束")
+            elif judge == "退出" or i >= self.max_iters:
+                print("退出")
                 print(f"答案: {answer}")
                 break
             
