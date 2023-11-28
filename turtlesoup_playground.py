@@ -270,6 +270,7 @@ if __name__ == "__main__":
         openai.api_key = f.read()
     
     turtle_soup = TurtleSoup(gpt_model="gpt-4")
+    # turtle_soup = TurtleSoup(gpt_model="gpt-3.5-turbo-16k")
     # turtle_soup.create_problem()
     # problem = """他是一个人体画家，而曾经的模特不能再给他帮忙了，正当他缺乏灵感的时候，他收到了一封匿名信，信上的人为他提供了几组照片，并索要酬劳。画家拿到照片获得了灵感，很快又有了作品。他把钱打到约定的账户，没多久又收到新的照片，但每次要求的汇款方式都不同。那一天他又收到了信，当他看到内容后他吓疯了。
     # """
