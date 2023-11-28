@@ -5,11 +5,14 @@ import logging
 import os
 import json
 
-from turtlesoup_prompts import prompt_create_problem, prompt_guess, prompt_judge
+from turtlesoup_prompts import prompt_create_problem, prompt_guess, prompt_judge, prompt_verification_failure, prompt_verification
 
 
 class TurtleSoup:
-    def __init__(self, stream=True, response_max_tokens=2048, player_temperature=0.7, judge_temperature=0.7, create_problem_temperature=0.7, gpt_model="gpt-3.5-turbo-16k", max_iters=100):
+    def __init__(self, stream=True, response_max_tokens=2048, 
+                 player_temperature=0.7, judge_temperature=0.7, create_problem_temperature=0.7, 
+                 gpt_model="gpt-3.5-turbo-16k", max_iters=100,
+                 max_create_times=5, hint_interval=5):
         self.stream = stream
         self.response_max_tokens = response_max_tokens
         self.player_temperature = player_temperature
@@ -17,6 +20,8 @@ class TurtleSoup:
         self.create_problem_temperature = create_problem_temperature
         self.gpt_model = gpt_model
         self.max_iters = max_iters
+        self.max_create_times = max_create_times
+        self.hint_interval = hint_interval
     
     def query_gpt_nostream(self, messages, temperature):
         server_error_cnt = 0
@@ -82,14 +87,56 @@ class TurtleSoup:
         for guess, judge in guesses:
             out += f"问: {guess}\n答: {judge}\n\n"
         return out
+
+    def _create_problem_single(self, messages, max_try=5):
+        i = 0
+        while i < max_try:
+            response = self.query_gpt(messages, temperature=self.create_problem_temperature).strip()
+            try:
+                ret = json.loads(response)
+                return ret["问题"], ret["答案"], response
+            except:
+                print(f"invalid response: {response}")
+                i += 1
+        raise ValueError("Max number of trials exceeded")
+    
+    
+    def verify(self, problem, answer, max_retry=5):
+        prompt = prompt_verification.format(problem=problem, answer=answer)
+        messages = [{"role": "user", "content": prompt}]
+        num_try = 0
+        while num_try < max_retry:
+            try:
+                response = self.query_gpt(messages)
+                ret = json.loads(response)
+                assert "分析" in ret.keys() and "审核通过" in ret.keys() and "修改建议" in ret.keys()
+                return ret
+            except Exception as e:
+                print("verification fail:", e)
+                num_try += 1
+                
+        raise ValueError("Max number of trials exceeded")
+        
     
     def create_problem(self):
-        response = self.query_gpt([{"role": "user", "content": prompt_create_problem}], temperature=self.create_problem_temperature).strip()
-        try:
-            ret = json.loads(response)
-        except:
-            raise ValueError(f"invalid response: {response}")
-        problem, answer = ret["问题"], ret["答案"]
+        messages = [{"role": "user", "content": prompt_create_problem}]
+        problem, answer, response = self._create_problem_single(messages)
+        messages.append({"role": "assistant", "content": response})
+        
+        num_try_verification = 0
+        while num_try_verification < self.max_create_times:
+            verification_result = self.verify(problem, answer)
+            if verification_result["审核通过"]:
+                break
+            prompt = prompt_verification_failure.format(
+                reasoning=verification_result["分析"], 
+                critique=verification_result["修改建议"]
+            )
+            messages.append({"role": "user", "content": prompt})
+            problem, answer, response = self._create_problem_single(messages)
+            messages.append({"role": "assistant", "content": response})
+            num_try_verification += 1
+    
         return problem, answer
     
     def input_problem(self):
@@ -109,30 +156,47 @@ class TurtleSoup:
         guess = input('请输入你的问题或猜测: ').strip()
         return guess
     
-    def gpt_judge(self, problem, guesses, current_guess, answer):
+    def gpt_judge(self, problem, guesses, current_guess, answer, max_try=5):
         prompt = prompt_judge.format(
             problem=problem, 
             guesses=self.format_guesses(guesses),
             current_guess=current_guess,
-            answer=answer
+            answer=answer,
+            hint_interval=self.hint_interval
         )
-        judge = self.query_gpt([{"role": "user", "content": prompt}], temperature=self.judge_temperature).strip().strip("。")
-        assert judge in ["是", "不是", "不相关", "成功", "退出"], f"Uknown judge: {judge}"
-        return judge
+        i = 0
+        while i < max_try:
+            response = self.query_gpt([{"role": "user", "content": prompt}], temperature=self.judge_temperature).strip().strip("。")
+            try:
+                ret = json.loads(response)
+                judge = ret["回答"]
+                assert judge in ["是", "不是", "不相关", "成功", "退出"] or "提示：" in judge, f"Uknown judge: {judge}"
+                return judge
+            except:
+                print(f"invalid response: {response}")
+                i += 1
+        raise ValueError("Max number of trials exceeded")
+            
     
-    def human_judge(self):
-        judge = input('请回答"是","不是","不相关","成功"或"退出"，或者用y,n,x,w,q代替，或者直接打字表示提示: ').strip().lower()
-        if judge in ["q", "退出"]:
-            return "退出"
-        elif judge in ["w", "退出"]:
-            return "成功"
-        elif judge in ["y", "是"]:
-            return "是"
-        elif judge in ["n", "不是"]:
-            return "不是"
-        elif judge in ["x", "不相关"]:
-            return "不相关"
-        raise ValueError(f"Unknown judgement: {judge}")
+    def human_judge(self, max_try=5):
+        i = 0
+        while i < max_try:
+            judge = input('请回答"是","不是","不相关","成功"或"退出"，或者用y,n,x,w,q代替，或者以“提示：”开始表示提示: ').strip().lower()
+            if judge in ["q", "退出"]:
+                return "退出"
+            elif judge in ["w", "退出"]:
+                return "成功"
+            elif judge in ["y", "是"]:
+                return "是"
+            elif judge in ["n", "不是"]:
+                return "不是"
+            elif judge in ["x", "不相关"]:
+                return "不相关"
+            elif judge.startswith("提示："):
+                return judge
+            print(f"Unknown judgement: {judge}")
+            i += 1
+        raise ValueError("Max number of trials exceeded")
     
     def run(self, gpt_play=False, gpt_judge=True, gpt_problem=True, problem=None, answer=None):
         if gpt_play:
@@ -151,6 +215,7 @@ class TurtleSoup:
         
         guesses = []
         i = 0
+        fail_count = 0
         while True:
             print("问: ", end="")
             if gpt_play:
@@ -164,7 +229,7 @@ class TurtleSoup:
             else:
                 judge = self.human_judge()
             guesses.append([guess, judge])
-            assert judge in ["是", "不是", "不相关", "成功", "退出"]
+            assert judge in ["是", "不是", "不相关", "成功", "退出"] or "提示：" in judge, judge
             if judge == "成功":
                 print("成功解决！")
                 print(f"答案: {answer}")
@@ -173,6 +238,20 @@ class TurtleSoup:
                 print("退出")
                 print(f"答案: {answer}")
                 break
+            elif judge in ["不是", "不相关"]:
+                fail_count += 1
+                if fail_count == self.hint_interval:
+                    guess = "请给我一些提示"
+                    print(f"（达到失败次数{self.hint_interval}，自动提示）问: {guess}")
+                    print("答: ", end="")
+                    if gpt_judge:
+                        judge = self.gpt_judge(problem, guesses, guess, answer)
+                    else:
+                        judge = self.human_judge()
+                    guesses.append([guess, judge])
+                    fail_count = 0
+            else:
+                fail_count = 0 # reset
             
             
     def run_player(self, gpt_problem=True, problem=None, answer=None):
@@ -187,7 +266,7 @@ class TurtleSoup:
             
 
 if __name__ == "__main__":
-    with open("openai_key.txt") as f:
+    with open("/Users/wzk/Library/Mobile Documents/com~apple~CloudDocs/Documents/doc/workplace/research/TuTu/turtle_soup/openai_key.txt") as f:
         openai.api_key = f.read()
     
     turtle_soup = TurtleSoup(gpt_model="gpt-4")
@@ -201,4 +280,5 @@ if __name__ == "__main__":
     """
     answer = """凶手在厕所刚杀完人，就听见外面有人进来，为了不暴露，打扮成了在拖地的清洁工，由于灯光的昏暗，女子打招呼所看到的拖地清洁工，其实是凶手倒立着死者，用死者的头发在拖地。
     """
-    turtle_soup.run_both(problem=problem, answer=answer)
+    # turtle_soup.run_both(problem=problem, answer=answer)
+    turtle_soup.run_both(gpt_problem=True, answer=answer)

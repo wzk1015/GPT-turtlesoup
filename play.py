@@ -51,3 +51,6 @@ elif args.game == "guess_person":
         gpt_problem=args.gpt_problem,
         answer=answer
     )
+
+else:
+    raise NotImplementedError
