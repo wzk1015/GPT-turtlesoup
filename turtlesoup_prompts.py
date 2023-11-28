@@ -217,4 +217,4 @@ prompt_verification_failure = """
 """
 
 if __name__ == "__main__":
-    print()
+    print(prompt_guess)
