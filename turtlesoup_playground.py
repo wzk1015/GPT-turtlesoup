@@ -26,7 +26,7 @@ class TurtleSoup:
     def query_gpt_nostream(self, messages, temperature):
         server_error_cnt = 0
         if isinstance(messages, str):
-            messages = {"role": "user", "content" : messages}
+            messages = [{"role": "user", "content" : messages}]
         while server_error_cnt < 3:
             try:
                 response = openai.ChatCompletion.create(
@@ -49,7 +49,7 @@ class TurtleSoup:
     def query_gpt_stream(self, messages, temperature):
         server_error_cnt = 0
         if isinstance(messages, str):
-            messages = {"role": "user", "content" : messages}
+            messages = [{"role": "user", "content" : messages}]
         full_response = ""
         while server_error_cnt < 3:
             try:
